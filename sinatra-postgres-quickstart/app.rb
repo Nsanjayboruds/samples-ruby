@@ -64,7 +64,7 @@ helpers do
   def db_connection
     PG.connect(DB_CONFIG)
   rescue PG::Error => e
-    halt_json(500, { error: "Database connection failed: #{e.message}" })
+    halt_json(500, { error: 'Database connection failed' })
   end
 
   def halt_json(status, payload)
@@ -173,6 +173,8 @@ helpers do
   end
 
   def validate_book_payload!(payload, require_all_fields: true)
+    halt_json(400, { error: 'Payload must be a JSON object' }) unless payload.is_a?(Hash)
+
     allowed_fields = %w[title author isbn published_year]
     unknown_fields = payload.keys - allowed_fields
     unless unknown_fields.empty?
@@ -214,6 +216,8 @@ helpers do
   end
 
   def validate_review_payload!(payload, require_all_fields: true)
+    halt_json(400, { error: 'Payload must be a JSON object' }) unless payload.is_a?(Hash)
+
     allowed_fields = %w[reviewer rating comment]
     unknown_fields = payload.keys - allowed_fields
     unless unknown_fields.empty?
@@ -256,7 +260,7 @@ get '/health' do
   conn.exec('SELECT 1')
   json({ status: 'healthy', service: 'Ruby Books API', database: 'connected' })
 rescue PG::Error => e
-  halt_json(503, { status: 'unhealthy', service: 'Ruby Books API', database: 'disconnected', error: e.message })
+  halt_json(503, { status: 'unhealthy', service: 'Ruby Books API', database: 'disconnected' })
 ensure
   conn.close if conn
 end
