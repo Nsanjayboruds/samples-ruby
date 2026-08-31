@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ruby-books-postgres
+    environment:
+      POSTGRES_DB: booksdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - books-network
+
+  app:
+    build: .
+    container_name: ruby-books-app
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: booksdb
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PORT: 8000
+    ports:
+      - "${APP_HOST_PORT:-18080}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - books-network
+
+volumes:
+  postgres_data:
+
+networks:
+  books-network:
+    driver: bridge

@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ruby-books-postgres-test
+    environment:
+      POSTGRES_DB: booksdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - books-network-test
+
+  app:
+    build: .
+    container_name: ruby-books-app-test
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: booksdb
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PORT: 8001
+    ports:
+      - "8001:8001"
+    command: bundle exec puma config.ru -b tcp://0.0.0.0:8001 -e production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - books-network-test
+
+volumes:
+  postgres_data_test:
+
+networks:
+  books-network-test:
+    driver: bridge
