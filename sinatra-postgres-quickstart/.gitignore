@@ -1,6 +1,5 @@
 .env
 keploy/
-Gemfile.lock
 *.gem
 *.rbc
 /.config
