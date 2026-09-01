@@ -256,7 +256,7 @@ end
 
 # Health check endpoint
 get '/health' do
-  conn = db_connection
+  conn = PG.connect(DB_CONFIG)
   conn.exec('SELECT 1')
   json({ status: 'healthy', service: 'Ruby Books API', database: 'connected' })
 rescue PG::Error => e
