@@ -37,6 +37,10 @@ request_counter=0
 choose_free_port() {
   local candidate
   local occupied_ports
+  if ! command -v ss >/dev/null 2>&1; then
+    echo "Error: 'ss' command not found. Install iproute2 or set APP_HOST_PORT explicitly." >&2
+    return 1
+  fi
   occupied_ports="$(ss -ltnH | awk '{print $4}' | sed -E 's/.*:([0-9]+)$/\1/' | sort -u)"
 
   for candidate in $(seq 18080 18120); do
