@@ -11,7 +11,7 @@ RUN apt-get update -qq && \
 
 # Copy Gemfile and install dependencies
 COPY Gemfile* ./
-RUN bundle install
+RUN bundle install --frozen
 
 # Copy application code
 COPY . .

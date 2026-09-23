@@ -157,7 +157,9 @@ helpers do
   end
 
   def ensure_unique_isbn!(conn, isbn, exclude_book_id: nil)
-    return if isbn.nil? || isbn.to_s.strip.empty?
+    # Normalize empty string to nil so it doesn't collide on the UNIQUE index
+    isbn = isbn.to_s.strip.empty? ? nil : isbn
+    return if isbn.nil?
 
     query = 'SELECT id FROM books WHERE isbn = $1'
     params = [isbn]
@@ -310,13 +312,15 @@ get '/books' do
   where_clauses = []
 
   if params['q'].is_a?(String) && !params['q'].strip.empty?
-    query_params << "%#{params['q'].strip.downcase}%"
-    where_clauses << "(LOWER(b.title) LIKE $#{query_params.length} OR LOWER(b.author) LIKE $#{query_params.length})"
+    escaped = params['q'].strip.downcase.gsub('%', '\\%').gsub('_', '\\_')
+    query_params << "%#{escaped}%"
+    where_clauses << "(LOWER(b.title) LIKE $#{query_params.length} ESCAPE '\\' OR LOWER(b.author) LIKE $#{query_params.length} ESCAPE '\\')"
   end
 
   if params['author'].is_a?(String) && !params['author'].strip.empty?
-    query_params << "%#{params['author'].strip.downcase}%"
-    where_clauses << "LOWER(b.author) LIKE $#{query_params.length}"
+    escaped = params['author'].strip.downcase.gsub('%', '\\%').gsub('_', '\\_')
+    query_params << "%#{escaped}%"
+    where_clauses << "LOWER(b.author) LIKE $#{query_params.length} ESCAPE '\\'"
   end
 
   if min_year
@@ -454,7 +458,17 @@ put '/books/:id' do
 
   conn = db_connection
   ensure_book_exists!(conn, book_id)
-  ensure_unique_isbn!(conn, request_body['isbn'], exclude_book_id: book_id)
+
+  # Fetch existing values so omitted optional fields are preserved, not NULLed
+  existing_result = conn.exec_params('SELECT isbn, published_year FROM books WHERE id = $1', [book_id])
+  existing = existing_result[0]
+
+  isbn         = request_body.key?('isbn')           ? request_body['isbn']           : existing['isbn']
+  published_year = request_body.key?('published_year') ? request_body['published_year'] : existing['published_year']&.to_i
+
+  # Normalize empty ISBN to nil before uniqueness check and binding
+  isbn = isbn.to_s.strip.empty? ? nil : isbn
+  ensure_unique_isbn!(conn, isbn, exclude_book_id: book_id)
 
   result = conn.exec_params(
     'UPDATE books
@@ -464,8 +478,8 @@ put '/books/:id' do
     [
       request_body['title'].strip,
       request_body['author'].strip,
-      request_body['isbn'],
-      request_body['published_year'],
+      isbn,
+      published_year,
       book_id
     ]
   )
@@ -487,30 +501,36 @@ patch '/books/:id' do
   validate_book_payload!(request_body, require_all_fields: false)
 
   conn = db_connection
-  existing_result = conn.exec_params('SELECT * FROM books WHERE id = $1', [book_id])
-  halt_json(404, { error: 'Book not found' }) if existing_result.ntuples.zero?
 
-  existing = existing_result[0]
-  title = request_body.key?('title') ? request_body['title']&.strip : existing['title']
-  author = request_body.key?('author') ? request_body['author']&.strip : existing['author']
-  isbn = request_body.key?('isbn') ? request_body['isbn'] : existing['isbn']
-  published_year = if request_body.key?('published_year')
-                     request_body['published_year']
-                   else
-                     existing['published_year']&.to_i
-                   end
+  # Wrap in a transaction to prevent lost updates and 500 on concurrent delete
+  conn.transaction do
+    existing_result = conn.exec_params('SELECT * FROM books WHERE id = $1 FOR UPDATE', [book_id])
+    halt_json(404, { error: 'Book not found' }) if existing_result.ntuples.zero?
 
-  ensure_unique_isbn!(conn, isbn, exclude_book_id: book_id)
+    existing = existing_result[0]
+    title    = request_body.key?('title')          ? request_body['title']&.strip          : existing['title']
+    author   = request_body.key?('author')         ? request_body['author']&.strip         : existing['author']
+    isbn     = request_body.key?('isbn')           ? request_body['isbn']                  : existing['isbn']
+    published_year = if request_body.key?('published_year')
+                       request_body['published_year']
+                     else
+                       existing['published_year']&.to_i
+                     end
 
-  result = conn.exec_params(
-    'UPDATE books
-     SET title = $1, author = $2, isbn = $3, published_year = $4, updated_at = CURRENT_TIMESTAMP
-     WHERE id = $5
-     RETURNING *',
-    [title, author, isbn, published_year, book_id]
-  )
+    # Normalize empty ISBN to nil
+    isbn = isbn.to_s.strip.empty? ? nil : isbn
+    ensure_unique_isbn!(conn, isbn, exclude_book_id: book_id)
 
-  json({ message: 'Book updated successfully', book: serialize_book(result[0]) })
+    result = conn.exec_params(
+      'UPDATE books
+       SET title = $1, author = $2, isbn = $3, published_year = $4, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5
+       RETURNING *',
+      [title, author, isbn, published_year, book_id]
+    )
+
+    json({ message: 'Book updated successfully', book: serialize_book(result[0]) })
+  end
 rescue PG::UniqueViolation
   halt_json(400, { error: 'ISBN already exists' })
 ensure

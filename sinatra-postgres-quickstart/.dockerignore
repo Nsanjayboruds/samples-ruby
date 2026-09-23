@@ -1,0 +1,17 @@
+# Git history
+.git/
+.gitignore
+
+# Keploy recorded test sets (generated at runtime, not needed in image)
+keploy/
+
+# Local environment secrets — never bake into a shared image
+.env
+.env.*
+
+# Dev tooling
+run-keploy.sh
+
+# Docker files themselves
+.dockerignore
+docker-compose.yml.test
