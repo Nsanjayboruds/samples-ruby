@@ -200,6 +200,14 @@ helpers do
       halt_json(400, { error: 'Author cannot be empty' })
     end
 
+    if payload.key?('title') && payload['title'].is_a?(String) && payload['title'].length > 255
+      halt_json(400, { error: 'Title must not exceed 255 characters' })
+    end
+
+    if payload.key?('author') && payload['author'].is_a?(String) && payload['author'].length > 255
+      halt_json(400, { error: 'Author must not exceed 255 characters' })
+    end
+
     if payload.key?('isbn') && !payload['isbn'].nil? && payload['isbn'].to_s.length > 13
       halt_json(400, { error: 'ISBN must not exceed 13 characters' })
     end
@@ -282,8 +290,9 @@ get '/books' do
   content_type :json
   pagination = parse_pagination_params
 
-  min_year = parse_integer_param(params['min_year'], 'min_year', min: 1450)
-  max_year = parse_integer_param(params['max_year'], 'max_year', min: 1450)
+  current_year_plus_one = Time.now.year + 1
+  min_year = parse_integer_param(params['min_year'], 'min_year', min: 1450, max: current_year_plus_one)
+  max_year = parse_integer_param(params['max_year'], 'max_year', min: 1450, max: current_year_plus_one)
   if min_year && max_year && min_year > max_year
     halt_json(400, { error: 'min_year must be less than or equal to max_year' })
   end
