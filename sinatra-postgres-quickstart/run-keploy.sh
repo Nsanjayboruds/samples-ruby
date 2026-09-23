@@ -247,4 +247,4 @@ kill -INT "$KEPLOY_PID" >/dev/null 2>&1 || true
 wait "$KEPLOY_PID" >/dev/null 2>&1 || true
 
 echo "Recorded $request_counter API interactions."
-echo "Run replay with: keploy test -c \"docker compose up\" --container-name \"$CONTAINER_NAME\" --delay 20"
+echo "Run replay with: keploy test -c \"docker compose up\" --container-name \"$CONTAINER_NAME\" --cid-type docker-compose --buildDelay 50 --delay 10"

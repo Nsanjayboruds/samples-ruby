@@ -26,8 +26,6 @@ SCHEMA_SQL = <<~SQL
       )
   );
 
-  ALTER TABLE books ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-  ALTER TABLE books ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
 
   CREATE TABLE IF NOT EXISTS reviews (
       id SERIAL PRIMARY KEY,
@@ -57,7 +55,8 @@ begin
   startup_conn.exec(SCHEMA_SQL)
   startup_conn.close
 rescue PG::Error => e
-  puts "Failed to initialize database schema: #{e.message}"
+  warn "Failed to initialize database schema: #{e.message}"
+  exit 1
 end
 
 helpers do
@@ -135,8 +134,8 @@ helpers do
       published_year: row['published_year']&.to_i,
       created_at: row['created_at'],
       updated_at: row['updated_at'],
-      review_count: row['review_count'] ? row['review_count'].to_i : nil,
-      avg_rating: row['avg_rating'] ? row['avg_rating'].to_f : nil
+      review_count: row['review_count']&.then { |v| v.to_i unless v == '0' && row['avg_rating'] == '0' } || (row.key?('review_count') ? row['review_count'].to_i : nil),
+      avg_rating: row['avg_rating']&.then { |v| v == '0' && row['review_count'] == '0' ? nil : v.to_f }
     }
   end
 
@@ -248,8 +247,19 @@ helpers do
       end
     end
 
-    if payload.key?('comment') && !payload['comment'].nil? && payload['comment'].to_s.length > 1000
-      halt_json(400, { error: 'Comment must not exceed 1000 characters' })
+    if payload.key?('comment') && !payload['comment'].nil?
+      unless payload['comment'].is_a?(String)
+        halt_json(400, { error: 'Comment must be a string' })
+      end
+      if payload['comment'].length > 1000
+        halt_json(400, { error: 'Comment must not exceed 1000 characters' })
+      end
+    end
+
+    if payload.key?('reviewer') && !payload['reviewer'].nil?
+      unless payload['reviewer'].is_a?(String)
+        halt_json(400, { error: 'Reviewer must be a string' })
+      end
     end
   end
 end
@@ -299,12 +309,12 @@ get '/books' do
   query_params = []
   where_clauses = []
 
-  if params['q'] && !params['q'].strip.empty?
+  if params['q'].is_a?(String) && !params['q'].strip.empty?
     query_params << "%#{params['q'].strip.downcase}%"
     where_clauses << "(LOWER(b.title) LIKE $#{query_params.length} OR LOWER(b.author) LIKE $#{query_params.length})"
   end
 
-  if params['author'] && !params['author'].strip.empty?
+  if params['author'].is_a?(String) && !params['author'].strip.empty?
     query_params << "%#{params['author'].strip.downcase}%"
     where_clauses << "LOWER(b.author) LIKE $#{query_params.length}"
   end
@@ -359,7 +369,7 @@ get '/books' do
   )
 
   books = books_result.map { |row| serialize_book(row) }
-  total_pages = (total_records.to_f / pagination[:per_page]).ceil
+  total_pages = [(total_records.to_f / pagination[:per_page]).ceil, 1].max
 
   json(
     books: books,
@@ -542,7 +552,7 @@ get '/books/:id/reviews' do
   )
 
   reviews = result.map { |row| serialize_review(row) }
-  total_pages = (total_records.to_f / pagination[:per_page]).ceil
+  total_pages = [(total_records.to_f / pagination[:per_page]).ceil, 1].max
 
   json(
     reviews: reviews,

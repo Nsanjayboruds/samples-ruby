@@ -47,7 +47,7 @@ bundle exec ruby app.rb
 Health check:
 
 ```bash
-curl http://localhost:${APP_HOST_PORT:-18080}/health
+curl http://localhost:${PORT:-8000}/health
 ```
 
 ## Run with Docker (Recommended)
