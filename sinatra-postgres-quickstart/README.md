@@ -28,6 +28,11 @@ Optional local run (without Docker):
 ```
 .
 ├── app.rb
+├── config.ru
+├── Gemfile
+├── Gemfile.lock
+├── Dockerfile
+├── .dockerignore
 ├── docker-compose.yml
 ├── init.sql
 ├── run-keploy.sh
@@ -37,10 +42,13 @@ Optional local run (without Docker):
 
 ## Run Locally (Optional)
 
+On Ubuntu/WSL, PostgreSQL uses `peer` auth by default. Run the following to set a password and create the database over TCP:
+
 ```bash
 bundle install
-createdb booksdb
-psql -d booksdb -f init.sql
+sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+createdb -h localhost -U postgres booksdb
+psql -h localhost -U postgres -d booksdb -f init.sql
 bundle exec ruby app.rb
 ```
 
@@ -78,6 +86,8 @@ docker compose down -v
 
 Run the script:
 
+> **⚠️ Warning**: This script resets the Postgres volume on start and on exit (`docker compose down -v`). Do not run it against a database you want to keep.
+
 ```bash
 ./run-keploy.sh
 ```
@@ -91,12 +101,12 @@ What this script does:
 5. Includes expected validation and not-found errors (400/404) to capture negative scenarios
 6. Stops recording cleanly
 
-Recorded tests are stored in the `keploy/tests` directory.
+Recorded tests are stored under `keploy/test-set-N/`.
 
 ## Keploy Replay
 
 ```bash
-keploy test -c "docker compose up" --container-name "ruby-books-app" --cmd-type docker-compose
+keploy test -c "docker compose up" --container-name "ruby-books-app" --cmd-type docker-compose --buildDelay 50 --delay 10
 ```
 
 ## API Endpoints
@@ -197,7 +207,8 @@ curl "http://localhost:${APP_HOST_PORT:-18080}/analytics/books/top-rated?limit=3
 
 3. Port conflicts:
 
-- Ensure ports 5432 and 8000 are free
+   - **Docker run**: the app is exposed on `${APP_HOST_PORT:-18080}` (not 8000). PostgreSQL is not published to the host.
+   - **Local run**: ensure ports `5432` and `${PORT:-8000}` are free.
 
 ## Notes
 

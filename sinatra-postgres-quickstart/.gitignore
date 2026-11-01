@@ -11,8 +11,5 @@ keploy/
 /test/version_tmp/
 /tmp/
 .byebug_history
-.dat*
 .repl_history
 .DS_Store
-.env.example
-VALIDATION.md
