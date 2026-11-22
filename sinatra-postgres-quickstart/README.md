@@ -98,7 +98,7 @@ What this script does:
 2. Selects a free host port in the `18080-18120` range unless `APP_HOST_PORT` is set
 3. Waits for `/health`
 4. Sends 20 API calls across list/search/filter/create/update/delete/reviews/analytics
-5. Includes expected validation and not-found errors (400/404) to capture negative scenarios
+5. Includes expected validation and conflict/not-found errors (400/409/404) to capture negative scenarios
 6. Stops recording cleanly
 
 Recorded tests are stored under `keploy/test-set-N/`.

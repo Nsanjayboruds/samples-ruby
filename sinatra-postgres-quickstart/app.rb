@@ -12,50 +12,18 @@ DB_CONFIG = {
   password: ENV['DB_PASSWORD'] || 'postgres'
 }.freeze
 
-SCHEMA_SQL = <<~SQL
-  CREATE TABLE IF NOT EXISTS books (
-      id SERIAL PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      author VARCHAR(255) NOT NULL,
-      isbn VARCHAR(13) UNIQUE,
-      published_year INTEGER,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT books_published_year_check CHECK (
-          published_year IS NULL OR (published_year >= 1450 AND published_year <= EXTRACT(YEAR FROM CURRENT_DATE) + 1)
-      )
-  );
-
-
-  CREATE TABLE IF NOT EXISTS reviews (
-      id SERIAL PRIMARY KEY,
-      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-      reviewer VARCHAR(120) NOT NULL,
-      rating INTEGER NOT NULL,
-      comment TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT reviews_rating_check CHECK (rating >= 1 AND rating <= 5),
-      CONSTRAINT reviews_comment_len_check CHECK (comment IS NULL OR char_length(comment) <= 1000)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_books_title ON books (title);
-  CREATE INDEX IF NOT EXISTS idx_books_author ON books (author);
-  CREATE INDEX IF NOT EXISTS idx_books_published_year ON books (published_year);
-  CREATE INDEX IF NOT EXISTS idx_reviews_book_id ON reviews (book_id);
-SQL
 
 # Configure Sinatra
 set :port, ENV['PORT'] || 8000
 set :bind, '0.0.0.0'
 
-# Initialize database schema on startup
+# Verify database connectivity on startup (schema is managed by init.sql)
 begin
   startup_conn = PG.connect(DB_CONFIG)
-  startup_conn.exec(SCHEMA_SQL)
+  startup_conn.exec('SELECT 1')
   startup_conn.close
 rescue PG::Error => e
-  warn "Failed to initialize database schema: #{e.message}"
+  warn "Failed to connect to database: #{e.message}"
   exit 1
 end
 
@@ -134,8 +102,8 @@ helpers do
       published_year: row['published_year']&.to_i,
       created_at: row['created_at'],
       updated_at: row['updated_at'],
-      review_count: row['review_count']&.then { |v| v.to_i unless v == '0' && row['avg_rating'] == '0' } || (row.key?('review_count') ? row['review_count'].to_i : nil),
-      avg_rating: row['avg_rating']&.then { |v| v == '0' && row['review_count'] == '0' ? nil : v.to_f }
+      review_count: row.key?('review_count') ? row['review_count'].to_i : nil,
+      avg_rating:   row.key?('avg_rating') && row['review_count'].to_i.positive? ? row['avg_rating'].to_f : nil
     }
   end
 
@@ -170,7 +138,7 @@ helpers do
     end
 
     result = conn.exec_params(query, params)
-    halt_json(400, { error: 'ISBN already exists' }) unless result.ntuples.zero?
+    halt_json(409, { error: 'ISBN already exists' }) unless result.ntuples.zero?
   end
 
   def validate_book_payload!(payload, require_all_fields: true)
@@ -184,32 +152,35 @@ helpers do
 
     if require_all_fields
       %w[title author].each do |required_key|
-        if payload[required_key].to_s.strip.empty?
-          halt_json(400, { error: "#{required_key.capitalize} is required" })
+        unless payload[required_key].is_a?(String) && !payload[required_key].strip.empty?
+          halt_json(400, { error: "#{required_key.capitalize} is required and must be a string" })
         end
       end
     elsif (payload.keys & allowed_fields).empty?
       halt_json(400, { error: 'At least one field must be provided for update' })
     end
 
-    if payload.key?('title') && payload['title'].to_s.strip.empty?
-      halt_json(400, { error: 'Title cannot be empty' })
+    if payload.key?('title')
+      unless payload['title'].is_a?(String)
+        halt_json(400, { error: 'Title must be a string' })
+      end
+      halt_json(400, { error: 'Title cannot be empty' }) if payload['title'].strip.empty?
+      halt_json(400, { error: 'Title must not exceed 255 characters' }) if payload['title'].length > 255
     end
 
-    if payload.key?('author') && payload['author'].to_s.strip.empty?
-      halt_json(400, { error: 'Author cannot be empty' })
+    if payload.key?('author')
+      unless payload['author'].is_a?(String)
+        halt_json(400, { error: 'Author must be a string' })
+      end
+      halt_json(400, { error: 'Author cannot be empty' }) if payload['author'].strip.empty?
+      halt_json(400, { error: 'Author must not exceed 255 characters' }) if payload['author'].length > 255
     end
 
-    if payload.key?('title') && payload['title'].is_a?(String) && payload['title'].length > 255
-      halt_json(400, { error: 'Title must not exceed 255 characters' })
-    end
-
-    if payload.key?('author') && payload['author'].is_a?(String) && payload['author'].length > 255
-      halt_json(400, { error: 'Author must not exceed 255 characters' })
-    end
-
-    if payload.key?('isbn') && !payload['isbn'].nil? && payload['isbn'].to_s.length > 13
-      halt_json(400, { error: 'ISBN must not exceed 13 characters' })
+    if payload.key?('isbn') && !payload['isbn'].nil?
+      unless payload['isbn'].is_a?(String)
+        halt_json(400, { error: 'ISBN must be a string' })
+      end
+      halt_json(400, { error: 'ISBN must not exceed 13 characters' }) if payload['isbn'].length > 13
     end
 
     if payload.key?('published_year') && !payload['published_year'].nil?
@@ -437,13 +408,15 @@ post '/books' do
   validate_book_payload!(request_body, require_all_fields: true)
 
   conn = db_connection
-  ensure_unique_isbn!(conn, request_body['isbn'])
+  # Normalize ISBN once, before both the uniqueness check and the INSERT binding
+  isbn = request_body['isbn'].is_a?(String) && !request_body['isbn'].strip.empty? ? request_body['isbn'] : nil
+  ensure_unique_isbn!(conn, isbn)
   result = conn.exec_params(
     'INSERT INTO books (title, author, isbn, published_year) VALUES ($1, $2, $3, $4) RETURNING *',
     [
       request_body['title'].strip,
       request_body['author'].strip,
-      request_body['isbn'],
+      isbn,
       request_body['published_year']
     ]
   )
@@ -451,7 +424,7 @@ post '/books' do
   status 201
   json({ message: 'Book created successfully', book: serialize_book(result[0]) })
 rescue PG::UniqueViolation
-  halt_json(400, { error: 'ISBN already exists' })
+  halt_json(409, { error: 'ISBN already exists' })
 ensure
   conn.close if conn
 end
@@ -495,7 +468,7 @@ put '/books/:id' do
 
   json({ message: 'Book updated successfully', book: serialize_book(result[0]) })
 rescue PG::UniqueViolation
-  halt_json(400, { error: 'ISBN already exists' })
+  halt_json(409, { error: 'ISBN already exists' })
 ensure
   conn.close if conn
 end
@@ -541,7 +514,7 @@ patch '/books/:id' do
     json({ message: 'Book updated successfully', book: serialize_book(result[0]) })
   end
 rescue PG::UniqueViolation
-  halt_json(400, { error: 'ISBN already exists' })
+  halt_json(409, { error: 'ISBN already exists' })
 ensure
   conn.close if conn
 end
@@ -711,14 +684,14 @@ ensure
 end
 
 # Error handlers
-error 400 do
-  json({ error: 'Bad Request' })
+not_found do
+  # Only set a body when halt_json hasn't already written one
+  content_type :json
+  body JSON.generate({ error: 'Not Found' }) if body.empty?
 end
 
-error 404 do
-  json({ error: 'Not Found' })
-end
-
-error 500 do
+error StandardError do
+  content_type :json
+  status 500
   json({ error: 'Internal Server Error' })
 end

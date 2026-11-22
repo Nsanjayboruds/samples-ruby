@@ -79,7 +79,7 @@ docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 docker volume rm -f "$POSTGRES_VOLUME" >/dev/null 2>&1 || true
 
 echo "Starting Keploy record mode..."
-"${SUDO_PREFIX[@]}" keploy record -c "APP_HOST_PORT=$APP_HOST_PORT BASE_URL=$BASE_URL docker compose up --build" --container-name "$CONTAINER_NAME" --cmd-type docker-compose --sync &
+${SUDO_PREFIX[0]+"${SUDO_PREFIX[@]}"} keploy record -c "APP_HOST_PORT=$APP_HOST_PORT BASE_URL=$BASE_URL docker compose up --build" --container-name "$CONTAINER_NAME" --cmd-type docker-compose --sync &
 KEPLOY_PID=$!
 
 wait_for_health() {
@@ -190,8 +190,8 @@ if [[ -z "$BOOK_ID" ]]; then
   exit 1
 fi
 
-# 8 - expected duplicate ISBN error
-api_call "Create duplicate ISBN" "POST" "/books" "400" "$new_book_json" >/dev/null
+# 8 - expected duplicate ISBN conflict
+api_call "Create duplicate ISBN" "POST" "/books" "409" "$new_book_json" >/dev/null
 
 # 9
 api_call "Patch book" "PATCH" "/books/$BOOK_ID" "200" '{"title":"Dune (Extended Edition)","published_year":1966}' >/dev/null
@@ -243,8 +243,9 @@ api_call "Get deleted book" "GET" "/books/$BOOK_ID" "404" >/dev/null
 api_call "Final books listing" "GET" "/books?page=1&per_page=5" "200" >/dev/null
 
 echo "Stopping Keploy recording..."
-kill -INT "$KEPLOY_PID" >/dev/null 2>&1 || true
+# Forward SIGINT to the actual keploy child (not just sudo wrapper)
+${SUDO_PREFIX[0]+"${SUDO_PREFIX[@]}"} kill -INT "$KEPLOY_PID" >/dev/null 2>&1 || true
 wait "$KEPLOY_PID" >/dev/null 2>&1 || true
 
 echo "Recorded $request_counter API interactions."
-echo "Run replay with: keploy test -c \"docker compose up\" --container-name \"$CONTAINER_NAME\" --cid-type docker-compose --buildDelay 50 --delay 10"
+echo "Run replay with: keploy test -c \"docker compose up\" --container-name \"$CONTAINER_NAME\" --cmd-type docker-compose --buildDelay 50 --delay 10"
